@@ -1,0 +1,1465 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Decoder: Circle of Fifths | 1:1 机械五度圈解码器完全复刻版</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; user-select: none; -webkit-user-select: none; }
+    body {
+      margin: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #111827;
+      background-color: #ffffff;
+      /* 只加一点点纹理：极浅的点阵 */
+      background-image: radial-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1.1px);
+      background-size: 24px 24px;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .device-card {
+      width: 100%;
+      max-width: min(74vh, 680px);
+      aspect-ratio: 1 / 1;
+      position: relative;
+      transform-style: preserve-3d;
+      transition: transform 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .device-card.is-flipped {
+      transform: rotateY(180deg);
+    }
+    .device-face {
+      position: absolute;
+      inset: 0;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
+      border-radius: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .device-face-front {
+      transform: translateZ(26px);
+      filter: drop-shadow(0 24px 32px rgba(15, 23, 42, 0.16)) drop-shadow(0 6px 10px rgba(15, 23, 42, 0.08));
+    }
+    .device-face-back {
+      transform: rotateY(180deg) translateZ(26px);
+      filter: drop-shadow(0 24px 32px rgba(15, 23, 42, 0.16)) drop-shadow(0 6px 10px rgba(15, 23, 42, 0.08));
+    }
+    /* Physical Acrylic Sandwich Thickness Layers between Z=-25px and Z=+25px */
+    .device-thickness-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #161821; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4b5563; }
+
+    /* Interactive hotspots */
+    .chord-hotspot {
+      cursor: pointer;
+      transition: filter 0.15s ease, transform 0.15s ease;
+    }
+    .chord-hotspot:hover {
+      filter: brightness(1.2) drop-shadow(0 0 8px rgba(250, 204, 21, 0.65));
+    }
+    .chord-hotspot:active {
+      transform: scale(0.96);
+    }
+    .wheel-grab {
+      cursor: grab;
+    }
+    .wheel-grab:active {
+      cursor: grabbing;
+    }
+
+    /* ---------- 版式：页面上只留这台机器 ---------- */
+    .stage {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      padding: 26px 20px 30px;
+    }
+
+    .scene {
+      position: relative;
+      width: 100%;
+      max-width: min(74vh, 680px);
+      perspective: 1500px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    /* 台面上的柔和接触阴影 */
+    .scene::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -12px;
+      width: 60%;
+      height: 26px;
+      transform: translateX(-50%);
+      border-radius: 50%;
+      background: radial-gradient(closest-side, rgba(15, 23, 42, 0.2), rgba(15, 23, 42, 0) 72%);
+      filter: blur(7px);
+      z-index: -1;
+      pointer-events: none;
+    }
+    /* 面板投影由 .device-face 的 drop-shadow 负责 */
+
+    /* ---------- 顶部控制条 ---------- */
+    .dock {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.82);
+      border: 1px solid rgba(15, 23, 42, 0.09);
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 10px 26px -14px rgba(15, 23, 42, 0.25);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .swatches {
+      display: flex;
+      gap: 7px;
+      padding: 0 5px;
+    }
+    .color-btn {
+      width: 17px;
+      height: 17px;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      cursor: pointer;
+      box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.16);
+      transition: transform 0.16s ease, box-shadow 0.16s ease;
+    }
+    .color-btn[data-color="yellow"] { background: #eab308; }
+    .color-btn[data-color="red"]    { background: #dc2626; }
+    .color-btn[data-color="green"]  { background: #2e9e44; }
+    .color-btn[data-color="gray"]   { background: #52525b; }
+    .color-btn:hover { transform: scale(1.12); }
+    .color-btn.is-on {
+      transform: scale(1.08);
+      box-shadow: inset 0 0 0 1px rgba(15, 23, 42, 0.16), 0 0 0 2px #ffffff, 0 0 0 3.5px rgba(15, 23, 42, 0.45);
+    }
+    .dock-sep {
+      width: 1px;
+      height: 18px;
+      margin: 0 4px;
+      background: rgba(15, 23, 42, 0.1);
+    }
+
+    .ctl {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 30px;
+      padding: 0 10px;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: #4b5563;
+      font-family: inherit;
+      font-size: 12.5px;
+      font-weight: 600;
+      line-height: 1;
+      cursor: pointer;
+      transition: background 0.16s ease, color 0.16s ease;
+    }
+    .ctl:hover { background: rgba(15, 23, 42, 0.055); color: #111827; }
+    .ctl svg { width: 14px; height: 14px; }
+    .ctl-primary { background: #171a21; color: #ffffff; }
+    .ctl-primary:hover { background: #2a2f39; color: #ffffff; }
+    .ctl.is-off { color: #b6bcc5; }
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #d5dae0;
+      transition: background 0.16s ease;
+    }
+    .dot.dot-on { background: #eab308; }
+
+    /* ---------- 底部提示 ---------- */
+    .hint {
+      margin: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 9px;
+      font-size: 12.5px;
+      color: #9aa3ae;
+      letter-spacing: 0.2px;
+    }
+    .hint kbd {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      color: #6b7280;
+      padding: 2px 6px;
+      margin: 0 1px;
+      border: 1px solid rgba(15, 23, 42, 0.13);
+      border-bottom-width: 2px;
+      border-radius: 5px;
+      background: #ffffff;
+    }
+    .hint-sep {
+      width: 3px;
+      height: 3px;
+      border-radius: 50%;
+      background: #d3d8de;
+    }
+
+    /* ---------- 设备本体沿用的极少量工具类（已脱离 Tailwind CDN） ---------- */
+    .w-full { width: 100%; }
+    .h-full { height: 100%; }
+    .select-none { user-select: none; -webkit-user-select: none; }
+    .pointer-events-none { pointer-events: none; }
+
+    @media (max-width: 560px) {
+      .stage { gap: 16px; padding: 16px 12px 22px; }
+      .scene { max-width: min(84vh, 100%); }
+      .ctl { padding: 0 8px; }
+      .ctl-text { display: none; }
+      .hint { font-size: 12px; gap: 7px; }
+    }
+
+  </style>
+</head>
+<body>
+
+  <!-- 主舞台：页面上只保留这台机器 -->
+  <main class="stage">
+
+    <!-- 顶部控制条：配色 / 透视 / 翻转 / 声音 -->
+    <div class="dock" role="toolbar" aria-label="外观与声音">
+      <div class="swatches" role="group" aria-label="外壳配色">
+        <button type="button" data-color="yellow" class="color-btn is-on" aria-label="经典黄" title="经典黄"></button>
+        <button type="button" data-color="red" class="color-btn" aria-label="复古红" title="复古红"></button>
+        <button type="button" data-color="green" class="color-btn" aria-label="森林绿" title="森林绿"></button>
+        <button type="button" data-color="gray" class="color-btn" aria-label="深空灰" title="深空灰"></button>
+      </div>
+
+      <span class="dock-sep"></span>
+
+      <button type="button" id="btn-xray" class="ctl is-on" title="半透明磨砂面板：透视内部完整五度圈">
+        <span id="xray-dot" class="dot dot-on"></span><span class="ctl-text">透视</span>
+      </button>
+
+      <button type="button" id="btn-flip" class="ctl ctl-primary" title="翻转正面 / 背面">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+        <span id="flip-label">查看背面</span>
+      </button>
+
+      <button type="button" id="btn-audio" class="ctl is-on" title="和弦试听开关">
+        <span id="audio-icon">🔊</span><span id="audio-label" class="ctl-text">声音</span>
+      </button>
+    </div>
+
+    <!-- 机器本体（正面 / 背面 3D 卡片） -->
+    <div class="scene">
+      <div id="device-card" class="device-card">
+
+          <!-- ================= 24-LAYER 3D PHYSICAL ACRYLIC & GEAR SANDWICH (Z = -24px to +24px, 3x Thicker!) ================= -->
+          <div id="thickness-layers-container" class=" pointer-events-none">
+            <!-- Populated with 24 dense 3D Z-slices by JS for ultra-solid physical block thickness during 3D flip -->
+          </div>
+
+          <!-- ================= FRONT FACE (正面) ================= -->
+          <div class="device-face device-face-front">
+            <svg id="svg-front" viewBox="0 0 600 600" class="w-full h-full select-none">
+              <defs>
+                <!--
+                  Outer Acrylic Plate Shape with Top U-Notch:
+                  At the top center (x=232..368), the yellow plate dips cleanly down to y=114,
+                  leaving generous room below the arch for "KEY 1 - 3 - 5" at y=132 without touching the slot!
+                -->
+                <path id="plate-shape" d="
+                  M 76,37
+                  L 196,37
+                  Q 218,37 232,66
+                  L 248,108
+                  Q 300,120 352,108
+                  L 368,66
+                  Q 382,37 404,37
+                  L 524,37
+                  A 39,39 0 0 1 563,76
+                  L 563,524
+                  A 39,39 0 0 1 524,563
+                  L 76,563
+                  A 39,39 0 0 1 37,524
+                  L 37,76
+                  A 39,39 0 0 1 76,37
+                  Z" />
+
+                <!--
+                  Front Window Cutout Mask (white = opaque plate, black = transparent window holes).
+                -->
+                <mask id="front-plate-mask">
+                  <rect x="0" y="0" width="600" height="600" fill="white" />
+                  <!-- Top Major 1 (KEY) Arched Window / Notch Area (bottom edge raised to y=108..120 so KEY 1-3-5 never touches it) -->
+                  <path d="M 225,35 L 375,35 L 352,108 Q 300,120 248,108 Z" fill="black" />
+                  <!-- Major 4 Window (30° CCW from top: cx=198, cy=123.3) -->
+                  <circle cx="198" cy="123.3" r="34" fill="black" />
+                  <!-- Major 5 Window (30° CW from top: cx=402, cy=123.3) -->
+                  <circle cx="402" cy="123.3" r="34" fill="black" />
+                  <!-- Key Signature Window (y=152..188, giving clean separation below KEY 1-3-5) -->
+                  <path d="M 263,152 Q 300,148 337,152 Q 344,170 335,188 Q 300,185 265,188 Q 256,170 263,152 Z" fill="black" />
+                  <!-- Diminished 7° Window (90° W of top: cx=218, cy=300) -->
+                  <circle cx="218" cy="300" r="24" fill="black" />
+                  <!-- Relative Minor 6 Window (Bottom 180°: cx=300, cy=454) -->
+                  <circle cx="300" cy="454" r="31" fill="black" />
+                  <!-- Minor 3 Window (150° W: cx=223, cy=433.4) -->
+                  <circle cx="223" cy="433.4" r="26.5" fill="black" />
+                  <!-- Minor 2 Window (150° E: cx=377, cy=433.4) -->
+                  <circle cx="377" cy="433.4" r="26.5" fill="black" />
+                </mask>
+
+                <!-- Dedicated Zone Clips so each track ONLY appears in its own window sector -->
+                <clipPath id="clip-ring-major">
+                  <rect x="40" y="30" width="520" height="250" />
+                </clipPath>
+                <clipPath id="clip-ring-minor">
+                  <rect x="130" y="340" width="340" height="200" />
+                </clipPath>
+                <clipPath id="clip-ring-sig">
+                  <path d="M 252,146 Q 300,142 348,146 L 348,194 Q 300,190 252,194 Z" />
+                </clipPath>
+                <clipPath id="clip-ring-dim">
+                  <circle cx="218" cy="300" r="32" />
+                </clipPath>
+
+                <clipPath id="plate-clip">
+                  <use href="#plate-shape" />
+                </clipPath>
+
+                <!-- Metallic Screw Gradient -->
+                <radialGradient id="screw-grad" cx="35%" cy="35%" r="65%">
+                  <stop offset="0%" stop-color="#ffffff" />
+                  <stop offset="45%" stop-color="#cbd5e1" />
+                  <stop offset="85%" stop-color="#64748b" />
+                  <stop offset="100%" stop-color="#334155" />
+                </radialGradient>
+
+                <!-- Drop Shadow for Window Recesses -->
+                <filter id="window-inset" x="-20%" y="-20%" width="140%" height="140%">
+                  <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#000000" flood-opacity="0.65" />
+                </filter>
+
+                <!-- Center Rivet Metallic Gradient -->
+                <radialGradient id="rivet-grad" cx="32%" cy="30%" r="68%">
+                  <stop offset="0%" stop-color="#ffffff" />
+                  <stop offset="30%" stop-color="#e2e8f0" />
+                  <stop offset="70%" stop-color="#94a3b8" />
+                  <stop offset="100%" stop-color="#475569" />
+                </radialGradient>
+              </defs>
+
+              <!-- 1. Base Clear Acrylic Casing Border -->
+              <use href="#plate-shape" fill="#18181b" stroke="rgba(255,255,255,0.28)" stroke-width="8" />
+
+              <!-- 2. ROTATING BLACK TURBINE GEAR WHEEL (Bottom Layer) -->
+              <g id="wheel-front-group" class="wheel-grab">
+                <g id="wheel-front-gear-rot" transform="rotate(0 300 300)">
+                  <path id="wheel-gear-front" fill="#1b1c20" stroke="#2e3038" stroke-width="2" />
+                </g>
+
+                <!-- Track 1: Major Chords Ring (r=210) -->
+                <g clip-path="url(#clip-ring-major)">
+                  <g id="wheel-front-majors" transform="rotate(0 300 300)"></g>
+                </g>
+
+                <!-- Track 2: Minor Chords Ring (r=154) -->
+                <g clip-path="url(#clip-ring-minor)">
+                  <g id="wheel-front-minors" transform="rotate(0 300 300)"></g>
+                </g>
+
+                <!-- Track 3: Key Signatures Ring (r=130, y=170) -->
+                <g clip-path="url(#clip-ring-sig)">
+                  <g id="wheel-front-sigs" transform="rotate(0 300 300)"></g>
+                </g>
+
+                <!-- Track 4: Diminished 7° Ring (r=82) -->
+                <g clip-path="url(#clip-ring-dim)">
+                  <g id="wheel-front-dims" transform="rotate(0 300 300)"></g><g id="wheel-front-items"></g>
+                </g>
+              </g>
+
+              <!-- 3. FRONT COLORED ACRYLIC PLATE WITH CUTOUT WINDOWS -->
+              <g id="front-plate-layer">
+                <use id="front-plate-fill" href="#plate-shape" fill="#eab308" mask="url(#front-plate-mask)" opacity="0.91" />
+              </g>
+
+              <!-- 4. WINDOW BEVEL RINGS & CONNECTING ARCS (Screen-printed on Top Plate ONLY - Masked so arcs NEVER cross over window slots!) -->
+              <g pointer-events="none">
+                <!-- Outer border highlight -->
+                <use href="#plate-shape" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="2" />
+
+                <g mask="url(#front-plate-mask)">
+                  <!-- Connecting circular arc for Major Chords (r=204) -->
+                  <path d="M 119.8,204.3 A 204,204 0 0 1 480.2,204.3" fill="none" stroke="#18181b" stroke-width="2.2" />
+                  <!-- Diminished 7° indicator arc (r=82) -->
+                  <path d="M 231,246 A 82,82 0 0 0 231,354" fill="none" stroke="#18181b" stroke-width="2" />
+                  <!-- Minor Chords indicator arc (r=154) -->
+                  <path d="M 192,409 A 154,154 0 0 0 408,409" fill="none" stroke="#18181b" stroke-width="2" />
+                  <!-- Ghost Circles (4th & 5th neighbors visible through translucent plate) -->
+                  <g id="ghost-neighbors" opacity="0.38">
+                    <circle cx="123.3" cy="198" r="28" fill="#18181b" />
+                    <circle cx="476.7" cy="198" r="28" fill="#18181b" />
+                  </g>
+                </g>
+
+                <!-- Cutout Window Dark Borders -->
+                <path d="M 232,66 L 248,108 Q 300,120 352,108 L 368,66" fill="none" stroke="#18181b" stroke-width="3" />
+                <circle cx="198" cy="123.3" r="34" fill="none" stroke="#18181b" stroke-width="3.5" />
+                <circle cx="402" cy="123.3" r="34" fill="none" stroke="#18181b" stroke-width="3.5" />
+                <path d="M 263,152 Q 300,148 337,152 Q 344,170 335,188 Q 300,185 265,188 Q 256,170 263,152 Z" fill="none" stroke="#18181b" stroke-width="2.5" />
+
+                <!-- Diminished 7° Window Rim & small degree badge -->
+                <circle cx="218" cy="300" r="24" fill="none" stroke="#18181b" stroke-width="3.5" />
+                <circle cx="238" cy="280" r="6.5" fill="#18181b" />
+                <circle cx="238" cy="280" r="3.2" fill="none" stroke="#eab308" class="plate-accent-stroke" stroke-width="1.6" />
+
+                <!-- Minor Chords Window Rims -->
+                <circle cx="223" cy="433.4" r="26.5" fill="none" stroke="#18181b" stroke-width="3.5" />
+                <circle cx="300" cy="454" r="31" fill="none" stroke="#18181b" stroke-width="3.5" />
+                <circle cx="377" cy="433.4" r="26.5" fill="none" stroke="#18181b" stroke-width="3.5" />
+
+                <!-- Small "m" badges attached to the bottom-right of each minor window -->
+                <circle cx="249" cy="445" r="9.5" fill="#18181b" />
+                <text x="249" y="448.5" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="700">m</text>
+                <circle cx="332" cy="461" r="10" fill="#18181b" />
+                <text x="332" y="464.5" text-anchor="middle" fill="#ffffff" font-size="11.5" font-weight="700">m</text>
+                <circle cx="403" cy="422" r="9.5" fill="#18181b" />
+                <text x="403" y="425.5" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="700">m</text>
+              </g>
+
+              <!-- 5. SCREEN-PRINTED GRAPHICS, QUICK-CHORD FORMULAS & TYPOGRAPHY (Cleanly spaced, no overlaps!) -->
+              <g pointer-events="none" fill="#18181b">
+                <!-- KEY 1 - 3 - 5 cleanly positioned at y=133 in the yellow band between the Top Notch (y=114) and Signature Window (y=150) -->
+                <text x="263" y="137" text-anchor="middle" font-size="12.5" font-weight="800" letter-spacing="0.5">KEY</text>
+                <circle cx="293" cy="133" r="9.5" fill="#18181b" />
+                <text x="293" y="137.2" text-anchor="middle" fill="#eab308" class="plate-accent-fill" font-size="12.5" font-weight="900">1</text>
+                <line x1="302.5" y1="133" x2="310" y2="133" stroke="#18181b" stroke-width="1.5" />
+                <circle cx="316" cy="133" r="5.8" fill="none" stroke="#18181b" stroke-width="1.4" />
+                <text x="316" y="136.2" text-anchor="middle" font-size="8.8" font-weight="700">3</text>
+                <line x1="321.8" y1="133" x2="328" y2="133" stroke="#18181b" stroke-width="1.5" />
+                <circle cx="334" cy="133" r="5.8" fill="none" stroke="#18181b" stroke-width="1.4" />
+                <text x="334" y="136.2" text-anchor="middle" font-size="8.8" font-weight="700">5</text>
+
+                <!-- "Signature" label placed cleanly BELOW the Signature Window (at y=206), replacing the cluttered BEADGCF arrows as requested! -->
+                <text x="300" y="206" text-anchor="middle" font-size="11.5" font-weight="800" letter-spacing="0.6">Signature</text>
+
+                <!-- IV Chord Quick-Chord Formula: 4 - 6 - 1 -->
+                <circle cx="195" cy="171" r="8.5" fill="#18181b" />
+                <text x="195" y="174.5" text-anchor="middle" fill="#eab308" class="plate-accent-fill" font-size="11" font-weight="900">4</text>
+                <line x1="203.5" y1="171" x2="209.5" y2="171" stroke="#18181b" stroke-width="1.3" />
+                <circle cx="215" cy="171" r="5.5" fill="none" stroke="#18181b" stroke-width="1.3" />
+                <text x="215" y="174" text-anchor="middle" font-size="8.5" font-weight="700">6</text>
+                <line x1="220.5" y1="171" x2="226.5" y2="171" stroke="#18181b" stroke-width="1.3" />
+                <circle cx="232" cy="171" r="5.5" fill="none" stroke="#18181b" stroke-width="1.3" />
+                <text x="232" y="174" text-anchor="middle" font-size="8.5" font-weight="700">1</text>
+
+                <!-- V Chord Quick-Chord Formula: 5 - 7 - 2 -->
+                <circle cx="385" cy="171" r="8.5" fill="#18181b" />
+                <text x="385" y="174.5" text-anchor="middle" fill="#eab308" class="plate-accent-fill" font-size="11" font-weight="900">5</text>
+                <line x1="393.5" y1="171" x2="399.5" y2="171" stroke="#18181b" stroke-width="1.3" />
+                <circle cx="405" cy="171" r="5.5" fill="none" stroke="#18181b" stroke-width="1.3" />
+                <text x="405" y="174" text-anchor="middle" font-size="8.5" font-weight="700">7</text>
+                <line x1="410.5" y1="171" x2="416.5" y2="171" stroke="#18181b" stroke-width="1.3" />
+                <circle cx="422" cy="171" r="5.5" fill="none" stroke="#18181b" stroke-width="1.3" />
+                <text x="422" y="174" text-anchor="middle" font-size="8.5" font-weight="700">2</text>
+
+                <!-- Horizontal Dashed Divider Line (MAJOR / minor boundary) -->
+                <line x1="78" y1="300" x2="188" y2="300" stroke="#18181b" stroke-width="2" stroke-dasharray="4 6" />
+                <line x1="270" y1="300" x2="285" y2="300" stroke="#18181b" stroke-width="2" stroke-dasharray="4 5" />
+                <line x1="316" y1="300" x2="522" y2="300" stroke="#18181b" stroke-width="2" stroke-dasharray="4 6" />
+
+                <!-- Vertical Center Arrows pointing up to Major & down to Minor -->
+                <line x1="300" y1="282" x2="300" y2="230" stroke="#18181b" stroke-width="1.8" />
+                <path d="M 295,236 L 300,229 L 305,236" fill="none" stroke="#18181b" stroke-width="1.8" />
+                <line x1="300" y1="318" x2="300" y2="375" stroke="#18181b" stroke-width="1.8" />
+                <path d="M 295,369 L 300,376 L 305,369" fill="none" stroke="#18181b" stroke-width="1.8" />
+
+                <!-- MAJOR chords / minor chords labels -->
+                <text x="318" y="268" font-size="23" font-weight="900" letter-spacing="0.5">MAJOR</text>
+                <text x="318" y="281" font-size="11.5" font-weight="600">chords</text>
+                <text x="318" y="336" font-size="23" font-weight="900" letter-spacing="0.3">minor</text>
+                <text x="318" y="349" font-size="11.5" font-weight="600">chords</text>
+
+                <!-- dim. label & vii° Quick-Chord Formula: 7 - 2 - 4 -->
+                <text x="247" y="304" font-size="12" font-weight="800">dim.</text>
+                <circle cx="218" cy="336" r="8.5" fill="#18181b" />
+                <text x="218" y="339.5" text-anchor="middle" fill="#eab308" class="plate-accent-fill" font-size="11" font-weight="900">7</text>
+                <line x1="226.5" y1="336" x2="232.5" y2="336" stroke="#18181b" stroke-width="1.3" />
+                <circle cx="238" cy="336" r="5.5" fill="none" stroke="#18181b" stroke-width="1.3" />
+                <text x="238" y="339" text-anchor="middle" font-size="8.5" font-weight="700">2</text>
+                <line x1="243.5" y1="336" x2="249.5" y2="336" stroke="#18181b" stroke-width="1.3" />
+                <circle cx="255" cy="336" r="5.5" fill="none" stroke="#18181b" stroke-width="1.3" />
+                <text x="255" y="339" text-anchor="middle" font-size="8.5" font-weight="700">4</text>
+
+                <!-- Curved "relative minor" label over bottom center window -->
+                <path id="rel-minor-arc" d="M 264,427 A 42,42 0 0 1 336,427" fill="none" />
+                <text font-size="10.5" font-weight="700" letter-spacing="0.4">
+                  <textPath href="#rel-minor-arc" startOffset="50%" text-anchor="middle">relative minor</textPath>
+                </text>
+
+                <!-- iii minor Quick-Chord Formula: 3 - 5 - 7 -->
+                <circle cx="212" cy="472" r="8.5" fill="#18181b" />
+                <text x="212" y="475.5" text-anchor="middle" fill="#eab308" class="plate-accent-fill" font-size="11" font-weight="900">3</text>
+                <line x1="220.5" y1="472" x2="226.5" y2="472" stroke="#18181b" stroke-width="1.3" />
+                <circle cx="232" cy="472" r="5.5" fill="none" stroke="#18181b" stroke-width="1.3" />
+                <text x="232" y="475" text-anchor="middle" font-size="8.5" font-weight="700">5</text>
+                <line x1="237.5" y1="472" x2="243.5" y2="472" stroke="#18181b" stroke-width="1.3" />
+                <circle cx="249" cy="472" r="5.5" fill="none" stroke="#18181b" stroke-width="1.3" />
+                <text x="249" y="475" text-anchor="middle" font-size="8.5" font-weight="700">7</text>
+
+                <!-- vi relative minor Quick-Chord Formula: 6 - 1 - 3 -->
+                <circle cx="292" cy="498" r="8.5" fill="#18181b" />
+                <text x="292" y="501.5" text-anchor="middle" fill="#eab308" class="plate-accent-fill" font-size="11" font-weight="900">6</text>
+                <line x1="300.5" y1="498" x2="306.5" y2="498" stroke="#18181b" stroke-width="1.3" />
+                <circle cx="312" cy="498" r="5.5" fill="none" stroke="#18181b" stroke-width="1.3" />
+                <text x="312" y="501" text-anchor="middle" font-size="8.5" font-weight="700">1</text>
+                <line x1="317.5" y1="498" x2="323.5" y2="498" stroke="#18181b" stroke-width="1.3" />
+                <circle cx="329" cy="498" r="5.5" fill="none" stroke="#18181b" stroke-width="1.3" />
+                <text x="329" y="501" text-anchor="middle" font-size="8.5" font-weight="700">3</text>
+
+                <!-- ii minor Quick-Chord Formula: 2 - 4 - 6 -->
+                <circle cx="366" cy="472" r="8.5" fill="#18181b" />
+                <text x="366" y="475.5" text-anchor="middle" fill="#eab308" class="plate-accent-fill" font-size="11" font-weight="900">2</text>
+                <line x1="374.5" y1="472" x2="380.5" y2="472" stroke="#18181b" stroke-width="1.3" />
+                <circle cx="386" cy="472" r="5.5" fill="none" stroke="#18181b" stroke-width="1.3" />
+                <text x="386" y="475" text-anchor="middle" font-size="8.5" font-weight="700">4</text>
+                <line x1="391.5" y1="472" x2="397.5" y2="472" stroke="#18181b" stroke-width="1.3" />
+                <circle cx="403" cy="472" r="5.5" fill="none" stroke="#18181b" stroke-width="1.3" />
+                <text x="403" y="475" text-anchor="middle" font-size="8.5" font-weight="700">6</text>
+
+                <!-- Bottom-left Product Branding: Decoder / Circle of Fifths -->
+                <text x="90" y="510" font-size="23" font-weight="800" letter-spacing="0.4">Decoder</text>
+                <text x="90" y="528" font-size="13.5" font-weight="500" letter-spacing="0.2">Circle of Fifths</text>
+              </g>
+
+              <!-- 6. HARDWARE DETAILS: Center Metallic Rivet & 4 Corner Hex Bolts -->
+              <g pointer-events="none">
+                <circle cx="300" cy="300" r="11" fill="url(#rivet-grad)" stroke="#1e293b" stroke-width="1.5" />
+                <ellipse cx="297" cy="297" rx="4" ry="2.5" fill="#ffffff" opacity="0.65" />
+
+                <g transform="translate(64,64)">
+                  <circle r="7" fill="url(#screw-grad)" stroke="#334155" stroke-width="1" />
+                  <circle r="3" fill="#475569" />
+                </g>
+                <g transform="translate(536,64)">
+                  <circle r="7" fill="url(#screw-grad)" stroke="#334155" stroke-width="1" />
+                  <circle r="3" fill="#475569" />
+                </g>
+                <g transform="translate(64,536)">
+                  <circle r="7" fill="url(#screw-grad)" stroke="#334155" stroke-width="1" />
+                  <circle r="3" fill="#475569" />
+                </g>
+                <g transform="translate(536,536)">
+                  <circle r="7" fill="url(#screw-grad)" stroke="#334155" stroke-width="1" />
+                  <circle r="3" fill="#475569" />
+                </g>
+              </g>
+
+              <!-- 7. INTERACTIVE CLICK HOTSPOTS FOR THE 7 DIATONIC CHORD WINDOWS (Play Audio & Inspect Triad) -->
+              <g id="window-hotspots">
+                <path data-degree="1" class="chord-hotspot" d="M 232,52 Q 300,42 368,52 L 352,108 Q 300,120 248,108 Z" fill="transparent" />
+                <circle data-degree="4" class="chord-hotspot" cx="198" cy="123.3" r="34" fill="transparent" />
+                <circle data-degree="5" class="chord-hotspot" cx="402" cy="123.3" r="34" fill="transparent" />
+                <circle data-degree="7" class="chord-hotspot" cx="218" cy="300" r="24" fill="transparent" />
+                <circle data-degree="3" class="chord-hotspot" cx="223" cy="433.4" r="26.5" fill="transparent" />
+                <circle data-degree="6" class="chord-hotspot" cx="300" cy="454" r="31" fill="transparent" />
+                <circle data-degree="2" class="chord-hotspot" cx="377" cy="433.4" r="26.5" fill="transparent" />
+              </g>
+            </svg>
+          </div>
+
+          <!-- ================= BACK FACE (背面 - 极简干净版 + 严格限宽不越界的 4和弦直接对应) ================= -->
+          <div class="device-face device-face-back">
+            <svg id="svg-back" viewBox="0 0 600 600" class="w-full h-full select-none">
+              <defs>
+                <mask id="back-plate-mask">
+                  <rect x="0" y="0" width="600" height="600" fill="white" />
+                  <rect x="324" y="162" width="182" height="44" rx="10" fill="black" />
+                </mask>
+
+                <clipPath id="back-plate-clip">
+                  <use href="#plate-shape" />
+                </clipPath>
+
+                <clipPath id="back-prog-window-clip">
+                  <rect x="324" y="162" width="182" height="44" rx="10" />
+                </clipPath>
+
+                <!-- Strict clip region for the right-side text column (x=318..512) so "Key of X: ..." NEVER overflows onto the left gear! -->
+                <clipPath id="back-text-col-clip">
+                  <rect x="318" y="210" width="196" height="42" />
+                </clipPath>
+              </defs>
+
+              <!-- 1. Base Casing Border -->
+              <use href="#plate-shape" fill="#18181b" stroke="rgba(255,255,255,0.28)" stroke-width="8" />
+
+              <!-- 2. ROTATING BLACK GEAR WHEEL -->
+              <g id="wheel-back-group" class="wheel-grab" transform="rotate(0 300 300)">
+                <path id="wheel-gear-back" fill="#1b1c20" stroke="#2e3038" stroke-width="2" />
+              </g>
+
+              <!-- 3. Back Colored Plate -->
+              <use id="back-plate-fill" href="#plate-shape" fill="#eab308" mask="url(#back-plate-mask)" opacity="0.92" />
+
+              <!-- 4. Back Graphic Block & Rotating Chord Progression Window -->
+              <g clip-path="url(#back-plate-clip)">
+                <!-- Large dark horizontal panel on the right & center -->
+                <path d="
+                  M 225,132
+                  L 560,132
+                  L 560,308
+                  L 225,308
+                  A 95,95 0 0 1 225,132
+                  Z
+                  M 334,162
+                  L 496,162
+                  A 10,10 0 0 1 506,172
+                  L 506,196
+                  A 10,10 0 0 1 496,206
+                  L 334,206
+                  A 10,10 0 0 1 324,196
+                  L 324,172
+                  A 10,10 0 0 1 334,162
+                  Z" fill="#18181b" fill-rule="evenodd" />
+
+                <!-- Rotating Scalloped Wheel Edge on left side of the dark block -->
+                <g id="wheel-back-cutout-gear" class="wheel-grab" transform="rotate(0 225 220)">
+                  <path id="wheel-gear-back-inner" fill="#141518" stroke="#eab308" stroke-width="1.5" stroke-opacity="0.35" />
+                </g>
+
+                <!-- THE REAL ROTATING CHORD PROGRESSIONS WINDOW -->
+                <g clip-path="url(#back-prog-window-clip)" class="wheel-grab">
+                  <rect x="324" y="162" width="182" height="44" rx="10" fill="#101115" />
+                  <g id="wheel-back-progs-rot" transform="rotate(0 300 300)"><g id="back-prog-pills"></g></g>
+                  <rect x="324" y="162" width="182" height="44" rx="10" fill="none" stroke="#3f3f46" stroke-width="2" />
+                </g>
+
+                <!-- Back Instructional Text ("示例Example" + "Chord Progressions" + Strict-Width 4-Chord Key Output) -->
+                <g pointer-events="none">
+                  <text x="235" y="232" text-anchor="middle" fill="#eab308" class="plate-accent-fill" font-size="13.5" font-weight="700">示例Example</text>
+                  <line x1="192" y1="240" x2="284" y2="240" stroke="#eab308" class="plate-accent-stroke" stroke-width="1.8" />
+                  <polygon points="282,237 289,240 282,243" fill="#eab308" class="plate-accent-fill" />
+
+                  <text x="415" y="154" text-anchor="middle" fill="#eab308" class="plate-accent-fill" font-size="15.5" font-weight="800">Chord Progressions</text>
+
+                  <g id="back-example-deg-pills" display="none"></g>
+
+                  <!-- Direct 4-Chord Key result strictly bounded within x=326..504 (max width 176px) so even 4-5-3-6 in F# (B -> C# -> A#m -> D#m) never touches the left gear! -->
+                  <g clip-path="url(#back-text-col-clip)">
+                    <text id="back-live-key-example" x="415" y="235" text-anchor="middle" font-size="11.5" font-weight="800">
+                      <!-- Populated by JS with auto-scaling font & compact arrows -->
+                    </text>
+                  </g>
+
+                  <line x1="326" y1="254" x2="504" y2="254" stroke="#52525b" stroke-width="1" />
+                  <text x="415" y="272" text-anchor="middle" fill="#eab308" class="plate-accent-fill" font-size="10.5" font-weight="600">使用五度圈在任意键位上演奏这些和弦</text>
+                  <text x="415" y="286" text-anchor="middle" fill="#eab308" class="plate-accent-fill" font-size="8.5" font-weight="500">Play these chords on any key position using</text>
+                  <text x="415" y="297" text-anchor="middle" fill="#eab308" class="plate-accent-fill" font-size="8.5" font-weight="500">a five degree circle</text>
+                </g>
+
+                <!-- Clean Back Bottom -->
+                <g pointer-events="none" fill="#18181b">
+                  <text x="360" y="500" font-size="18.5" font-weight="800" letter-spacing="0.2">Make Some Noise!</text>
+                </g>
+              </g>
+
+              <!-- Center Rivet & 4 Corner Screws on Back -->
+              <g pointer-events="none">
+                <circle cx="300" cy="300" r="9.5" fill="url(#rivet-grad)" stroke="#1e293b" stroke-width="1.5" />
+                <circle cx="64" cy="64" r="6.5" fill="url(#screw-grad)" />
+                <circle cx="536" cy="64" r="6.5" fill="url(#screw-grad)" />
+                <circle cx="64" cy="536" r="6.5" fill="url(#screw-grad)" />
+                <circle cx="536" cy="536" r="6.5" fill="url(#screw-grad)" />
+              </g>
+            </svg>
+          </div>
+
+        </div>
+
+      </div>
+
+    <p class="hint">
+      <span>拖拽转盘切换调性</span>
+      <span class="hint-sep"></span>
+      <span>滚轮 / <kbd>←</kbd><kbd>→</kbd></span>
+      <span class="hint-sep"></span>
+      <span>点击窗口试听和弦</span>
+    </p>
+
+  </main>
+
+  <script>
+    /********************************************************************
+     * 1. EXACT CIRCLE OF FIFTHS DATA (12 Keys Clockwise from Top = 0°)
+     ********************************************************************/
+    const WHEEL_KEYS = [
+      {
+        index: 0,
+        major: "C",
+        majorDisplay: "C",
+        minor: "a",
+        dim: "b",
+        sigText: "NATURAL",
+        sigDesc: "无升降号 (Natural)",
+        scale: ["C", "D", "E", "F", "G", "A", "B"],
+        semitones: [0, 2, 4, 5, 7, 9, 11],
+        backProg: [1, 4, 5, 1],
+        backProgDesc: "经典民谣/摇滚进行 (I-IV-V-I)"
+      },
+      {
+        index: 1,
+        major: "G",
+        majorDisplay: "G",
+        minor: "e",
+        dim: "f#",
+        sigText: "#F",
+        sigDesc: "1个升号 (#F)",
+        scale: ["G", "A", "B", "C", "D", "E", "F#"],
+        semitones: [7, 9, 11, 0, 2, 4, 6],
+        backProg: [1, 7, 6, 5],
+        backProgDesc: "背面图示顺阶下行进行 (1→7→6→5)"
+      },
+      {
+        index: 2,
+        major: "D",
+        majorDisplay: "D",
+        minor: "b",
+        dim: "c#",
+        sigText: "#FC",
+        sigDesc: "2个升号 (#F, #C)",
+        scale: ["D", "E", "F#", "G", "A", "B", "C#"],
+        semitones: [2, 4, 6, 7, 9, 11, 1],
+        backProg: [1, 5, 6, 4],
+        backProgDesc: "流行金曲万能四和弦 (1→5→6→4)"
+      },
+      {
+        index: 3,
+        major: "A",
+        majorDisplay: "A",
+        minor: "f#",
+        dim: "g#",
+        sigText: "#FCG",
+        sigDesc: "3个升号 (#F, #C, #G)",
+        scale: ["A", "B", "C#", "D", "E", "F#", "G#"],
+        semitones: [9, 11, 1, 2, 4, 6, 8],
+        backProg: [2, 5, 1, 6],
+        backProgDesc: "经典爵士律动循环 (2→5→1→6)"
+      },
+      {
+        index: 4,
+        major: "E",
+        majorDisplay: "E",
+        minor: "c#",
+        dim: "d#",
+        sigText: "#FCGD",
+        sigDesc: "4个升号 (#F, #C, #G, #D)",
+        scale: ["E", "F#", "G#", "A", "B", "C#", "D#"],
+        semitones: [4, 6, 8, 9, 11, 1, 3],
+        backProg: [1, 6, 4, 5],
+        backProgDesc: "复古五零年代进行 (1→6→4→5)"
+      },
+      {
+        index: 5,
+        major: "B",
+        majorDisplay: "B",
+        minor: "g#",
+        dim: "a#",
+        sigText: "#FCGDA",
+        sigDesc: "5个升号 (#F, #C, #G, #D, #A)",
+        scale: ["B", "C#", "D#", "E", "F#", "G#", "A#"],
+        semitones: [11, 1, 3, 4, 6, 8, 10],
+        backProg: [6, 4, 1, 5],
+        backProgDesc: "现代流行小调感进行 (6→4→1→5)"
+      },
+      {
+        index: 6,
+        major: "F#",
+        majorDisplay: "F#",
+        minor: "d#",
+        dim: "e#",
+        sigText: "#FCGDAE",
+        sigDesc: "6个升号 (#F, #C, #G, #D, #A, #E)",
+        scale: ["F#", "G#", "A#", "B", "C#", "D#", "E#"],
+        semitones: [6, 8, 10, 11, 1, 3, 5],
+        backProg: [4, 5, 3, 6],
+        backProgDesc: "日系王道抒情进行 (4→5→3→6)"
+      },
+      {
+        index: 7,
+        major: "Db",
+        majorDisplay: "Db",
+        minor: "bb",
+        dim: "c",
+        sigText: "bBEADG",
+        sigDesc: "5个降号 (bB, bE, bA, bD, bG)",
+        scale: ["Db", "Eb", "F", "Gb", "Ab", "Bb", "C"],
+        semitones: [1, 3, 5, 6, 8, 10, 0],
+        backProg: [1, 4, 6, 5],
+        backProgDesc: "明亮颂歌流行进行 (1→4→6→5)"
+      },
+      {
+        index: 8,
+        major: "Ab",
+        majorDisplay: "Ab",
+        minor: "f",
+        dim: "g",
+        sigText: "bBEAD",
+        sigDesc: "4个降号 (bB, bE, bA, bD)",
+        scale: ["Ab", "Bb", "C", "Db", "Eb", "F", "G"],
+        semitones: [8, 10, 0, 1, 3, 5, 7],
+        backProg: [1, 3, 4, 5],
+        backProgDesc: "经典递进上行进行 (1→3→4→5)"
+      },
+      {
+        index: 9,
+        major: "Eb",
+        majorDisplay: "Eb",
+        minor: "c",
+        dim: "d",
+        sigText: "bBEA",
+        sigDesc: "3个降号 (bB, bE, bA)",
+        scale: ["Eb", "F", "G", "Ab", "Bb", "C", "D"],
+        semitones: [3, 5, 7, 8, 10, 0, 2],
+        backProg: [6, 5, 4, 5],
+        backProgDesc: "摇滚律动小调循环 (6→5→4→5)"
+      },
+      {
+        index: 10,
+        major: "Bb",
+        majorDisplay: "Bb",
+        minor: "g",
+        dim: "a",
+        sigText: "bBE",
+        sigDesc: "2个降号 (bB, bE)",
+        scale: ["Bb", "C", "D", "Eb", "F", "G", "A"],
+        semitones: [10, 0, 2, 3, 5, 7, 9],
+        backProg: [1, 2, 4, 5],
+        backProgDesc: "轻快民谣上行进行 (1→2→4→5)"
+      },
+      {
+        index: 11,
+        major: "F",
+        majorDisplay: "F",
+        minor: "d",
+        dim: "e",
+        sigText: "bB",
+        sigDesc: "1个降号 (bB)",
+        scale: ["F", "G", "A", "Bb", "C", "D", "E"],
+        semitones: [5, 7, 9, 10, 0, 2, 4],
+        backProg: [1, 6, 2, 5],
+        backProgDesc: "百老汇/爵士标准循环 (1→6→2→5)"
+      }
+    ];
+
+    const DEGREE_META = {
+      1: { roman: "Ⅰ", role: "Ⅰ级 主和弦 (Tonic Major)", formula: [1, 3, 5], formulaText: "➊ - ③ - ⑤", quality: "major", suffix: "", intervalDesc: "根音 + 大三度(4半音) + 纯五度(7半音)" },
+      2: { roman: "ⅱm", role: "ⅱ级 上主小和弦 (Supertonic Minor)", formula: [2, 4, 6], formulaText: "➋ - ④ - ⑥", quality: "minor", suffix: "m", intervalDesc: "根音 + 小三度(3半音) + 纯五度(7半音)" },
+      3: { roman: "ⅲm", role: "ⅲ级 中音小和弦 (Mediant Minor)", formula: [3, 5, 7], formulaText: "➌ - ⑤ - ⑦", quality: "minor", suffix: "m", intervalDesc: "根音 + 小三度(3半音) + 纯五度(7半音)" },
+      4: { roman: "Ⅳ", role: "Ⅳ级 下属大三和弦 (Subdominant Major)", formula: [4, 6, 1], formulaText: "➍ - ⑥ - ①", quality: "major", suffix: "", intervalDesc: "根音 + 大三度(4半音) + 纯五度(7半音)" },
+      5: { roman: "Ⅴ", role: "Ⅴ级 属大三和弦 (Dominant Major)", formula: [5, 7, 2], formulaText: "➎ - ⑦ - ②", quality: "major", suffix: "", intervalDesc: "根音 + 大三度(4半音) + 纯五度(7半音)" },
+      6: { roman: "ⅵm", role: "ⅵ级 关系小调主和弦 (Relative Minor)", formula: [6, 1, 3], formulaText: "➏ - ① - ③", quality: "minor", suffix: "m", intervalDesc: "根音 + 小三度(3半音) + 纯五度(7半音)" },
+      7: { roman: "ⅶ°", role: "ⅶ°级 导音减和弦 (Leading-Tone Dim)", formula: [7, 2, 4], formulaText: "➐ - ② - ④", quality: "dim", suffix: "°", intervalDesc: "根音 + 小三度(3半音) + 减五度(6半音)" }
+    };
+
+    const COLOR_THEMES = {
+      yellow: { plate: "#eab308", rim: "#ca8a04", accent: "#eab308" },
+      red:    { plate: "#dc2626", rim: "#991b1b", accent: "#fca5a5" },
+      green:  { plate: "#2e9e44", rim: "#166534", accent: "#86efac" },
+      gray:   { plate: "#575761", rim: "#3f3f46", accent: "#e4e4e7" }
+    };
+
+    /********************************************************************
+     * 2. STATE MANAGEMENT
+     ********************************************************************/
+    let state = {
+      keyIndex: 1,           // 默认 G（与实体产品图示一致）
+      wheelAngle: -30,       // 第 i 个调转到正上方时 = -i * 30
+      selectedDegree: 1,     // 最近一次点击/弹奏的级数，换调时用它试听
+      xrayTranslucent: true, // 磨砂透视
+      isFlipped: false,
+      colorTheme: "yellow",
+      audioEnabled: true
+    };
+
+    /********************************************************************
+     * 3. WEB AUDIO API POLYPHONIC SYNTHESIZER
+     ********************************************************************/
+    let audioCtx = null;
+    function getAudioCtx() {
+      if (!audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new AudioContext();
+      }
+      if (audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
+      return audioCtx;
+    }
+
+    function midiToFreq(midi) {
+      return 440 * Math.pow(2, (midi - 69) / 12);
+    }
+
+    function playSingleNote(midi, delay = 0, duration = 0.9, gainLevel = 0.22) {
+      if (!state.audioEnabled) return;
+      try {
+        const ctx = getAudioCtx();
+        const now = ctx.currentTime + delay;
+
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const filter = ctx.createBiquadFilter();
+
+        osc1.type = "triangle";
+        osc2.type = "sine";
+        const freq = midiToFreq(midi);
+        osc1.frequency.setValueAtTime(freq, now);
+        osc2.frequency.setValueAtTime(freq * 2, now);
+
+        filter.type = "lowpass";
+        filter.frequency.setValueAtTime(2400, now);
+        filter.frequency.exponentialRampToValueAtTime(600, now + duration);
+
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(gainLevel, now + 0.018);
+        gain.gain.exponentialRampToValueAtTime(0.0008, now + duration);
+
+        const osc2Gain = ctx.createGain();
+        osc2Gain.gain.setValueAtTime(0.25, now);
+
+        osc1.connect(filter);
+        osc2.connect(osc2Gain);
+        osc2Gain.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+
+        osc1.start(now);
+        osc2.start(now);
+        osc1.stop(now + duration + 0.05);
+        osc2.stop(now + duration + 0.05);
+      } catch (e) {}
+    }
+
+    function playMechanicalClick() {
+      if (!state.audioEnabled) return;
+      try {
+        const ctx = getAudioCtx();
+        const now = ctx.currentTime;
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(190, now);
+        osc.frequency.exponentialRampToValueAtTime(55, now + 0.025);
+        gain.gain.setValueAtTime(0.18, now);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.03);
+      } catch (e) {}
+    }
+
+    function getTriadInfo(keyIdx, degree) {
+      const keyObj = WHEEL_KEYS[keyIdx];
+      const meta = DEGREE_META[degree];
+      const [d1, d2, d3] = meta.formula;
+
+      const n1 = keyObj.scale[d1 - 1];
+      const n2 = keyObj.scale[d2 - 1];
+      const n3 = keyObj.scale[d3 - 1];
+
+      let rootMidi = 60 + keyObj.semitones[d1 - 1];
+      let thirdMidi = rootMidi + (meta.quality === "major" ? 4 : 3);
+      let fifthMidi = rootMidi + (meta.quality === "dim" ? 6 : 7);
+
+      const chordSymbol = n1 + meta.suffix;
+      return {
+        degree,
+        chordSymbol,
+        rootNote: n1,
+        notes: [n1, n2, n3],
+        midis: [rootMidi, thirdMidi, fifthMidi],
+        meta
+      };
+    }
+
+    function playChordTriad(keyIdx, degree) {
+      const triad = getTriadInfo(keyIdx, degree);
+      playSingleNote(triad.midis[0] - 12, 0, 1.1, 0.14);
+      playSingleNote(triad.midis[0], 0.02, 1.0, 0.2);
+      playSingleNote(triad.midis[1], 0.055, 1.0, 0.18);
+      playSingleNote(triad.midis[2], 0.09, 1.05, 0.18);
+    }
+
+    /********************************************************************
+     * 4. BUILD THE 24-LAYER 3D THICKNESS SLABS & SVG GEAR WHEEL
+     ********************************************************************/
+    function init3DThicknessLayers() {
+      const container = document.getElementById("thickness-layers-container");
+      container.innerHTML = "";
+      // Create 24 dense 3D Z-slices from Z = -24px to Z = +24px (52px total thickness, 3x thicker than before!)
+      for (let z = -24; z <= 24; z += 2) {
+        if (z === 0) continue;
+        const absZ = Math.abs(z);
+        const div = document.createElement("div");
+        div.className = "device-thickness-layer";
+        div.style.transform = `translateZ(${z}px)`;
+
+        let fill = "#090a0f";
+        let stroke = "#27272a";
+        let isOuterShell = false;
+
+        if (absZ >= 20) {
+          // Colored outer acrylic plates (Front & Back)
+          fill = "#ca8a04";
+          stroke = "rgba(255,255,255,0.48)";
+          isOuterShell = true;
+        } else if (absZ >= 10) {
+          // Clear frosted acrylic middle spacer plates (as seen in Photo 3's edge view)
+          fill = "#1e293b";
+          stroke = "rgba(226,232,240,0.42)";
+        } else {
+          // Central dark gear wheel core layer
+          fill = "#090a0f";
+          stroke = "#3f3f46";
+        }
+
+        div.innerHTML = `<svg viewBox="0 0 600 600" class="w-full h-full"><use href="#plate-shape" class="${isOuterShell ? "thickness-shell-plate" : ""}" fill="${fill}" stroke="${stroke}" stroke-width="8" /></svg>`;
+        container.appendChild(div);
+      }
+    }
+
+    function generateScallopedWheelPath(cx, cy, rOuter, rInner, teethCount) {
+      let d = "";
+      const step = (Math.PI * 2) / teethCount;
+      for (let i = 0; i < teethCount; i++) {
+        const a1 = i * step - step * 0.26;
+        const a2 = i * step + step * 0.26;
+        const a3 = (i + 0.5) * step - step * 0.22;
+        const a4 = (i + 0.5) * step + step * 0.22;
+
+        const x1 = cx + rOuter * Math.sin(a1);
+        const y1 = cy - rOuter * Math.cos(a1);
+        const x2 = cx + rOuter * Math.sin(a2);
+        const y2 = cy - rOuter * Math.cos(a2);
+        const x3 = cx + rInner * Math.sin(a3);
+        const y3 = cy - rInner * Math.cos(a3);
+        const x4 = cx + rInner * Math.sin(a4);
+        const y4 = cy - rInner * Math.cos(a4);
+
+        if (i === 0) {
+          d += `M ${x1.toFixed(1)},${y1.toFixed(1)} `;
+        } else {
+          d += `L ${x1.toFixed(1)},${y1.toFixed(1)} `;
+        }
+        d += `A ${rOuter},${rOuter} 0 0 1 ${x2.toFixed(1)},${y2.toFixed(1)} `;
+        d += `Q ${x3.toFixed(1)},${y3.toFixed(1)} ${x4.toFixed(1)},${y4.toFixed(1)} `;
+      }
+      d += "Z";
+      return d;
+    }
+
+    function createSvgNoteLabel(noteStr, x, y, fontSize, fill, fontWeight = "800") {
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      text.setAttribute("x", x);
+      text.setAttribute("y", y);
+      text.setAttribute("text-anchor", "middle");
+      text.setAttribute("dominant-baseline", "central");
+      text.setAttribute("fill", fill);
+      text.setAttribute("font-size", fontSize);
+      text.setAttribute("font-weight", fontWeight);
+
+      if (noteStr.length > 1 && (noteStr.endsWith("#") || noteStr.endsWith("b"))) {
+        const base = noteStr.slice(0, -1);
+        const acc = noteStr.endsWith("#") ? "♯" : "♭";
+        text.textContent = base;
+        const tspan = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+        tspan.textContent = acc;
+        tspan.setAttribute("font-size", Math.round(fontSize * 0.62));
+        tspan.setAttribute("dy", -Math.round(fontSize * 0.26));
+        tspan.setAttribute("dx", "1");
+        text.appendChild(tspan);
+      } else {
+        text.textContent = noteStr;
+      }
+      g.appendChild(text);
+      return g;
+    }
+
+    function initWheelSvg() {
+      const gearPath = generateScallopedWheelPath(300, 300, 260, 248, 36);
+      document.getElementById("wheel-gear-front").setAttribute("d", gearPath);
+      document.getElementById("wheel-gear-back").setAttribute("d", gearPath);
+
+      const backInnerGear = generateScallopedWheelPath(225, 220, 86, 76, 16);
+      document.getElementById("wheel-gear-back-inner").setAttribute("d", backInnerGear);
+
+      const majorsGroup = document.getElementById("wheel-front-majors");
+      const minorsGroup = document.getElementById("wheel-front-minors");
+      const sigsGroup   = document.getElementById("wheel-front-sigs");
+      const dimsGroup   = document.getElementById("wheel-front-dims");
+
+      majorsGroup.innerHTML = "";
+      minorsGroup.innerHTML = "";
+      sigsGroup.innerHTML   = "";
+      dimsGroup.innerHTML   = "";
+
+      const backProgsGroup = document.getElementById("wheel-back-progs-rot");
+      backProgsGroup.innerHTML = '<g id="back-prog-pills"></g>';
+
+      WHEEL_KEYS.forEach((k, i) => {
+        const deg = i * 30;
+
+        // --- Track A: Major Chords (y=88 so it sits centered inside the raised top notch y=50..114) ---
+        const majG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        majG.setAttribute("transform", `rotate(${deg} 300 300)`);
+        const majLabel = createSvgNoteLabel(k.majorDisplay, 300, 88, 38, "#eab308", "800");
+        majLabel.classList.add("wheel-major-text");
+        majG.appendChild(majLabel);
+        majorsGroup.appendChild(majG);
+
+        // --- Track B: Key Signatures (y=170, centered inside the lowered Signature window y=152..188) ---
+        const sigG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        sigG.setAttribute("transform", `rotate(${deg} 300 300)`);
+        const sigText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        sigText.setAttribute("x", "300");
+        sigText.setAttribute("y", "170");
+        sigText.setAttribute("text-anchor", "middle");
+        sigText.setAttribute("dominant-baseline", "central");
+        sigText.setAttribute("fill", "#ffffff");
+        const formattedSig = k.sigText === "NATURAL" ? "—" : k.sigText.replace(/^#/, "♯").replace(/^b/, "♭");
+        sigText.setAttribute("font-size", formattedSig.length >= 6 ? "9.5" : "11.5");
+        sigText.setAttribute("font-weight", "700");
+        sigText.setAttribute("letter-spacing", "-0.3");
+        sigText.textContent = formattedSig;
+        sigG.appendChild(sigText);
+        sigsGroup.appendChild(sigG);
+
+        // --- Track C: Minor Chords (Radius 154, placed at bottom 300,454) ---
+        const minG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        minG.setAttribute("transform", `rotate(${deg} 300 300)`);
+        const minLabel = createSvgNoteLabel(k.minor, 300, 454, 28, "#ffffff", "700");
+        minG.appendChild(minLabel);
+        minorsGroup.appendChild(minG);
+
+        // --- Track D: Diminished Chords (Radius 82, placed at left 218,300) ---
+        const dimG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        dimG.setAttribute("transform", `rotate(${deg} 300 300)`);
+        const dimLabel = createSvgNoteLabel(k.dim, 218, 300, 20, "#eab308", "800");
+        dimG.appendChild(dimLabel);
+        dimsGroup.appendChild(dimG);
+
+        // --- Track E (BACK FACE): 12 Rotating Chord Progressions inside Back Window (center x=415, y=184) ---
+        const progSpoke = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        progSpoke.setAttribute("transform", `rotate(${-deg} 300 300)`);
+
+        const startX = 352;
+        const cy = 184;
+        k.backProg.forEach((num, stepIdx) => {
+          const cx = startX + stepIdx * 42;
+          const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+          circle.setAttribute("cx", cx);
+          circle.setAttribute("cy", cy);
+          circle.setAttribute("r", "10.5");
+          circle.setAttribute("fill", "#ffffff");
+          progSpoke.appendChild(circle);
+
+          const numText = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          numText.setAttribute("x", cx);
+          numText.setAttribute("y", cy + 0.5);
+          numText.setAttribute("text-anchor", "middle");
+          numText.setAttribute("dominant-baseline", "central");
+          numText.setAttribute("fill", "#090a0c");
+          numText.setAttribute("font-size", "12.5");
+          numText.setAttribute("font-weight", "900");
+          numText.textContent = num;
+          progSpoke.appendChild(numText);
+
+          if (stepIdx < k.backProg.length - 1) {
+            const arrow = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            arrow.setAttribute("x", cx + 21);
+            arrow.setAttribute("y", cy);
+            arrow.setAttribute("text-anchor", "middle");
+            arrow.setAttribute("dominant-baseline", "central");
+            arrow.setAttribute("fill", "#ffffff");
+            arrow.setAttribute("font-size", "12");
+            arrow.setAttribute("font-weight", "700");
+            arrow.textContent = "→";
+            progSpoke.appendChild(arrow);
+          }
+        });
+
+        backProgsGroup.appendChild(progSpoke);
+      });
+    }
+
+    /********************************************************************
+     * 6. SYNCHRONIZE ALL UI WITH CURRENT STATE
+     ********************************************************************/
+    function formatPrettyNote(str) {
+      return str.replace(/#/g, "♯").replace(/([A-Ga-g])b/g, "$1♭");
+    }
+
+    // 拖动时每帧都会走到这里，所以只做最轻的两件事：转盘角度 + 背面示例文案
+    function updateAllUI() {
+      const rotStr = `rotate(${state.wheelAngle} 300 300)`;
+      document.getElementById("wheel-front-gear-rot").setAttribute("transform", rotStr);
+      document.getElementById("wheel-front-majors").setAttribute("transform", rotStr);
+      document.getElementById("wheel-front-minors").setAttribute("transform", rotStr);
+      document.getElementById("wheel-front-sigs").setAttribute("transform", rotStr);
+      document.getElementById("wheel-front-dims").setAttribute("transform", rotStr);
+
+      const backRotStr = `rotate(${-state.wheelAngle} 300 300)`;
+      document.getElementById("wheel-back-group").setAttribute("transform", backRotStr);
+      document.getElementById("wheel-back-progs-rot").setAttribute("transform", backRotStr);
+      document.getElementById("wheel-back-cutout-gear").setAttribute("transform", `rotate(${-state.wheelAngle} 225 220)`);
+
+      updateBackFace();
+    }
+
+    // 背面窗口下方那行：“Key of G: G → F♯° → Em → D”
+    function updateBackFace() {
+      const keyObj = WHEEL_KEYS[state.keyIndex];
+      const prettyMajor = formatPrettyNote(keyObj.majorDisplay);
+      const chords = keyObj.backProg
+        .map((d) => formatPrettyNote(getTriadInfo(state.keyIndex, d).chordSymbol))
+        .join(" → ");
+
+      const el = document.getElementById("back-live-key-example");
+      if (!el) return;
+      el.innerHTML = "";
+
+      const fullLen = (`Key of ${prettyMajor}: ` + chords).length;
+      el.setAttribute("font-size", fullLen > 24 ? "10.2" : fullLen > 20 ? "11.2" : "12.2");
+      if (fullLen > 22) {
+        el.setAttribute("textLength", "172");
+        el.setAttribute("lengthAdjust", "spacingAndGlyphs");
+      } else {
+        el.removeAttribute("textLength");
+        el.removeAttribute("lengthAdjust");
+      }
+
+      const labelSpan = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+      labelSpan.setAttribute("fill", "#a1a1aa");
+      labelSpan.setAttribute("font-weight", "600");
+      labelSpan.textContent = `Key of ${prettyMajor}:`;
+
+      const chordsSpan = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
+      chordsSpan.setAttribute("dx", "8");
+      chordsSpan.setAttribute("fill", "#ffffff");
+      chordsSpan.setAttribute("font-weight", "800");
+      chordsSpan.textContent = chords;
+
+      el.appendChild(labelSpan);
+      el.appendChild(chordsSpan);
+    }
+
+    /********************************************************************
+     * 7. WHEEL ROTATION, DRAG GESTURES & KEY SELECTION
+     ********************************************************************/
+    function selectKeyByIndex(targetIdx, playAudio = true) {
+      const normalizedIdx = ((targetIdx % 12) + 12) % 12;
+      const targetAngle = -normalizedIdx * 30;
+
+      let diff = ((targetAngle - state.wheelAngle) % 360 + 540) % 360 - 180;
+      state.wheelAngle += diff;
+
+      const changed = state.keyIndex !== normalizedIdx;
+      state.keyIndex = normalizedIdx;
+
+      if (changed && playAudio) {
+        playMechanicalClick();
+        playChordTriad(state.keyIndex, state.selectedDegree);
+      }
+      updateAllUI();
+    }
+
+    function stepWheel(deltaSteps) {
+      selectKeyByIndex(state.keyIndex + deltaSteps, true);
+    }
+
+    function initWheelDrag() {
+      const svgFront = document.getElementById("svg-front");
+      const svgBack = document.getElementById("svg-back");
+
+      let isDragging = false;
+      let startPointerAngle = 0;
+      let startWheelAngle = 0;
+      let activeSvg = null;
+
+      function getAngleFromCenter(e, svgEl) {
+        const rect = svgEl.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+        const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+        return Math.atan2(clientY - cy, clientX - cx) * (180 / Math.PI);
+      }
+
+      function onStart(e, svgEl) {
+        isDragging = true;
+        activeSvg = svgEl;
+        startPointerAngle = getAngleFromCenter(e, svgEl);
+        startWheelAngle = state.wheelAngle;
+      }
+
+      function onMove(e) {
+        if (!isDragging || !activeSvg) return;
+        const currentPointerAngle = getAngleFromCenter(e, activeSvg);
+        let delta = currentPointerAngle - startPointerAngle;
+        if (delta > 180) delta -= 360;
+        if (delta < -180) delta += 360;
+
+        const factor = activeSvg.id === "svg-back" ? -1 : 1;
+        state.wheelAngle = startWheelAngle + delta * factor;
+
+        const nearestIdx = Math.round(-state.wheelAngle / 30);
+        const normIdx = ((nearestIdx % 12) + 12) % 12;
+        if (normIdx !== state.keyIndex) {
+          state.keyIndex = normIdx;
+          playMechanicalClick();
+        }
+        updateAllUI();
+      }
+
+      function onEnd() {
+        if (!isDragging) return;
+        isDragging = false;
+        activeSvg = null;
+        const snappedIdx = Math.round(-state.wheelAngle / 30);
+        selectKeyByIndex(snappedIdx, false);
+      }
+
+      [svgFront, svgBack].forEach((svgEl) => {
+        svgEl.addEventListener("mousedown", (e) => {
+          if (e.target.classList.contains("chord-hotspot")) return;
+          onStart(e, svgEl);
+        });
+        svgEl.addEventListener("touchstart", (e) => {
+          if (e.target.classList.contains("chord-hotspot")) return;
+          onStart(e, svgEl);
+        }, { passive: true });
+
+        svgEl.addEventListener("wheel", (e) => {
+          e.preventDefault();
+          stepWheel(e.deltaY > 0 ? 1 : -1);
+        }, { passive: false });
+      });
+
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("touchmove", onMove, { passive: true });
+      window.addEventListener("mouseup", onEnd);
+      window.addEventListener("touchend", onEnd);
+    }
+
+    /********************************************************************
+     * 9. EVENT LISTENERS & INITIALIZATION
+     ********************************************************************/
+    function applyColorTheme(themeKey) {
+      state.colorTheme = themeKey;
+      const theme = COLOR_THEMES[themeKey] || COLOR_THEMES.yellow;
+      document.getElementById("front-plate-fill").setAttribute("fill", theme.plate);
+      document.getElementById("back-plate-fill").setAttribute("fill", theme.plate);
+
+      document.querySelectorAll(".thickness-shell-plate").forEach(el => el.setAttribute("fill", theme.rim));
+      document.querySelectorAll(".plate-accent-fill").forEach(el => el.setAttribute("fill", theme.plate));
+      document.querySelectorAll(".plate-accent-stroke").forEach(el => el.setAttribute("stroke", theme.plate));
+
+      document.querySelectorAll(".color-btn").forEach((btn) => {
+        btn.classList.toggle("is-on", btn.dataset.color === themeKey);
+      });
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      init3DThicknessLayers();
+      initWheelSvg();
+      initWheelDrag();
+
+      // 默认停在 Key of G（与实体产品图示一致），静默进入
+      selectKeyByIndex(1, false);
+
+      // 点任何一个窗口，听这个级数的三和弦
+      document.querySelectorAll(".chord-hotspot").forEach((spot) => {
+        spot.addEventListener("click", (e) => {
+          e.stopPropagation();
+          state.selectedDegree = Number(spot.dataset.degree);
+          playChordTriad(state.keyIndex, state.selectedDegree);
+        });
+      });
+
+      // 键盘：← → 切调；数字 1-7 直接听该级和弦
+      window.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          stepWheel(-1);
+        } else if (e.key === "ArrowRight") {
+          e.preventDefault();
+          stepWheel(1);
+        } else if (e.key >= "1" && e.key <= "7") {
+          state.selectedDegree = Number(e.key);
+          playChordTriad(state.keyIndex, state.selectedDegree);
+        }
+      });
+
+      // 外壳配色
+      document.querySelectorAll(".color-btn").forEach((btn) => {
+        btn.addEventListener("click", () => applyColorTheme(btn.dataset.color));
+      });
+
+      // 磨砂透视
+      const xrayBtn = document.getElementById("btn-xray");
+      xrayBtn.addEventListener("click", () => {
+        state.xrayTranslucent = !state.xrayTranslucent;
+        document.getElementById("front-plate-fill").setAttribute("opacity", state.xrayTranslucent ? "0.91" : "1");
+        document.getElementById("back-plate-fill").setAttribute("opacity", state.xrayTranslucent ? "0.92" : "1");
+        document.getElementById("ghost-neighbors").setAttribute("opacity", state.xrayTranslucent ? "0.38" : "0");
+        document.getElementById("xray-dot").classList.toggle("dot-on", state.xrayTranslucent);
+      });
+
+      // 正反面翻转
+      const flipBtn = document.getElementById("btn-flip");
+      flipBtn.addEventListener("click", () => {
+        state.isFlipped = !state.isFlipped;
+        document.getElementById("device-card").classList.toggle("is-flipped", state.isFlipped);
+        document.getElementById("flip-label").textContent = state.isFlipped ? "查看正面" : "查看背面";
+      });
+
+      // 声音开关
+      const audioBtn = document.getElementById("btn-audio");
+      audioBtn.addEventListener("click", () => {
+        state.audioEnabled = !state.audioEnabled;
+        document.getElementById("audio-icon").textContent = state.audioEnabled ? "🔊" : "🔇";
+        document.getElementById("audio-label").textContent = state.audioEnabled ? "声音" : "静音";
+        audioBtn.classList.toggle("is-off", !state.audioEnabled);
+      });
+    });
+  </script>
+</body>
+</html>
